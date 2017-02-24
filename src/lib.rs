@@ -13,7 +13,7 @@ extern crate iso8601;
 extern crate xml;
 
 mod error;
-mod parser;
+pub mod parser;
 mod request;
 mod value;
 mod utils;
