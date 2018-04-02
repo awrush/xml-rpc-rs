@@ -5,12 +5,51 @@ documentation = "https://docs.rs/xmlrpc/"
 repository = "https://github.com/jonas-schievink/xml-rpc-rs.git"
 keywords = ["xml", "rpc", "remote", "ipc"]
 categories = ["network-programming", "encoding"]
+readme = "README.md"
 license = "CC0-1.0"
 name = "xmlrpc"
-version = "0.4.0"
+version = "0.11.0"
 
 [dependencies]
-base64 = "0.3.0"
-hyper = "0.10.2"
-iso8601 = "0.1.1"
-xml-rs = "0.3.4"
+base64 = "0.9.0"
+iso8601 = "0.2.0"
+xml-rs = "0.7.0"
+reqwest = { version = "0.8.0", optional = true }
+
+[dev-dependencies]
+version-sync = "0.5"
+
+[features]
+default = ["reqwest"]
+
+[[example]]
+name = "client"
+required-features = ["reqwest"]
+
+[[example]]
+name = "custom-header"
+required-features = ["reqwest"]
+
+# cargo-release configuration
+[package.metadata.release]
+tag-message = "{{version}}"
+no-dev-version = true
+pre-release-commit-message = "Release {{version}}"
+
+# Change the changelog's `Unreleased` section to refer to this release and prepend new `Unreleased` section
+[[package.metadata.release.pre-release-replacements]]
+file    = "CHANGELOG.md"
+search  = "## Unreleased"
+replace = "## Unreleased\n\nNo changes.\n\n## {{version}} - {{date}}"
+
+# Bump the version inside the example manifest in `README.md`
+[[package.metadata.release.pre-release-replacements]]
+file    = "README.md"
+search  = 'xmlrpc = "[a-z0-9\\.-]+"'
+replace = 'xmlrpc = "{{version}}"'
+
+# Bump the version referenced by the `html_root_url` attribute in `lib.rs`
+[[package.metadata.release.pre-release-replacements]]
+file    = "src/lib.rs"
+search  = "https://docs.rs/xmlrpc/[a-z0-9\\.-]+"
+replace = "https://docs.rs/xmlrpc/{{version}}"

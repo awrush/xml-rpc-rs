@@ -1,14 +1,13 @@
 //! An XML-RPC implementation in Rust.
 //!
-//! The `xmlrpc` crate provides a minimal implementation of the [XML-RPC spec][spec].
+//! The `xmlrpc` crate provides a minimal implementation of the [XML-RPC specification].
 //!
-//! [Repo link][repo].
-//!
-//! [spec]: http://xmlrpc.scripting.com/spec.html
-//! [repo]: https://github.com/jonas-schievink/xml-rpc-rs
+//! [XML-RPC specification]: http://xmlrpc.scripting.com/spec.html
+
+#![doc(html_root_url = "https://docs.rs/xmlrpc/0.11.0")]
+#![warn(missing_debug_implementations)]
 
 extern crate base64;
-extern crate hyper;
 extern crate iso8601;
 extern crate xml;
 
@@ -17,12 +16,12 @@ pub mod parser;
 mod request;
 mod value;
 mod utils;
+mod transport;
 
-pub use error::{RequestError, Fault};
-pub use request::{Request, RequestResult};
-pub use value::Value;
+pub use error::{Error, Fault};
+pub use request::Request;
+pub use value::{Value, Index};
+pub use transport::Transport;
 
-/// A response from the server.
-///
-/// XML-RPC specifies that a call should either return a single `Value`, or a `<fault>`.
-pub type Response = Result<Value, Fault>;
+#[cfg(feature = "reqwest")]
+pub use transport::http;
