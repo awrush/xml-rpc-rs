@@ -1,5 +1,7 @@
-#[cfg(feature = "reqwest")]
+#[cfg(feature = "http")]
 extern crate reqwest;
+#[cfg(feature = "http")]
+extern crate mime;
 
 use Value;
 use error::{Error, RequestErrorKind};
@@ -25,6 +27,27 @@ impl<'a> Request<'a> {
         Request {
             name,
             args: Vec::new(),
+        }
+    }
+
+    /// Creates a "multicall" request that will perform multiple requests at once.
+    ///
+    /// This requires that the server supports the [`system.multicall`] method.
+    ///
+    /// [`system.multicall`]: https://mirrors.talideon.com/articles/multicall.html
+    #[allow(deprecated)]
+    pub fn new_multicall<'r, I>(requests: I) -> Self
+    where 'a: 'r, I: IntoIterator<Item=&'r Request<'a>> {
+        Request {
+            name: "system.multicall",
+            args: vec![Value::Array(requests.into_iter().map(|req| {
+                let mut multicall_struct: BTreeMap<String, Value> = BTreeMap::new();
+
+                multicall_struct.insert("methodName".into(), req.name.into());
+                multicall_struct.insert("params".into(), Value::Array(req.args.clone()));
+
+                Value::Struct(multicall_struct)
+            }).collect())],
         }
     }
 
@@ -65,7 +88,7 @@ impl<'a> Request<'a> {
     /// HTTP POST request to the given URL. If you only use this method to perform requests, you
     /// don't need to depend on `reqwest` yourself.
     ///
-    /// This method is only available when the `reqwest` feature is enabled (this is the default).
+    /// This method is only available when the `http` feature is enabled (this is the default).
     ///
     /// # Errors
     ///
@@ -76,7 +99,7 @@ impl<'a> Request<'a> {
     ///
     /// [`Request::call`]: #method.call
     /// [`Transport`]: trait.Transport.html
-    #[cfg(feature = "reqwest")]
+    #[cfg(feature = "http")]
     pub fn call_url<U: reqwest::IntoUrl>(&self, url: U) -> Result<Value, Error> {
         // While we could implement `Transport` for `T: IntoUrl`, such an impl might not be
         // completely obvious (as it applies to `&str`), so I've added this method instead.
@@ -111,6 +134,7 @@ impl<'a> Request<'a> {
     ///
     /// * `methodName`: the request name
     /// * `params`: the request arguments
+    #[deprecated(since="0.11.2", note="use `Request::multicall` instead")]
     pub fn into_multicall_struct(self) -> Value {
         let mut multicall_struct: BTreeMap<String, Value> = BTreeMap::new();
 

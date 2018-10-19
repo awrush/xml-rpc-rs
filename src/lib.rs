@@ -4,8 +4,9 @@
 //!
 //! [XML-RPC specification]: http://xmlrpc.scripting.com/spec.html
 
-#![doc(html_root_url = "https://docs.rs/xmlrpc/0.11.0")]
+#![doc(html_root_url = "https://docs.rs/xmlrpc/0.12.0")]
 #![warn(missing_debug_implementations)]
+#![warn(missing_docs)]
 
 extern crate base64;
 extern crate iso8601;
@@ -23,5 +24,5 @@ pub use request::Request;
 pub use value::{Value, Index};
 pub use transport::Transport;
 
-#[cfg(feature = "reqwest")]
+#[cfg(feature = "http")]
 pub use transport::http;
