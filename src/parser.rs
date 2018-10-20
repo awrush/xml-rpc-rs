@@ -5,7 +5,6 @@ use error::ParseError;
 
 use base64;
 use xml::reader::{XmlEvent, EventReader};
-use xml::name::OwnedName;
 use xml::common::Position;
 use xml::ParserConfig;
 use iso8601::datetime;
@@ -76,26 +75,37 @@ impl<'a, R: Read> Parser<'a, R> {
     /// Expects that the current token is an opening tag like `<tag>` without attributes (and a
     /// local name without namespaces). If not, returns an error.
     fn expect_open(&mut self, tag: &str) -> ParseResult<()> {
-        match self.cur.clone() {
-            XmlEvent::StartElement { ref name, .. }
-            if name == &OwnedName::local(tag) => {
-                self.next()?;
-                Ok(())
-            }
+        match self.cur {
+            XmlEvent::StartElement { ref name, .. } if name.local_name == tag => {},
             _ => return self.expected(format!("<{}>", tag)),
         }
+        self.next()?;
+        Ok(())
     }
 
     /// Expects that the current token is a closing tag like `</tag>` with a local name without
     /// namespaces. If not, returns an error.
     fn expect_close(&mut self, tag: &str) -> ParseResult<()> {
-        match self.cur.clone() {
-            XmlEvent::EndElement { ref name } if name == &OwnedName::local(tag) => {
-                self.next()?;
-                Ok(())
-            }
-            _ => self.expected(format!("</{}>", tag)),
+        match self.cur {
+            XmlEvent::EndElement { ref name } if name.local_name == tag => {},
+            _ => return self.expected(format!("</{}>", tag)),
         }
+        self.next()?;
+        Ok(())
+    }
+
+    /// Expects that the current token is a characters sequence. Parses and returns a value.
+    fn expect_value<T, E>(&mut self, for_type: &'static str, parse: impl Fn(&str) -> Result<T, E>) -> ParseResult<T> {
+        let value = match self.cur {
+            XmlEvent::Characters(ref string) => {
+                parse(string).map_err(|_| {
+                    self.invalid_value(for_type, string.to_owned())
+                })?
+            },
+            _ => return self.expected("characters"),
+        };
+        self.next()?;
+        Ok(value)
     }
 
     /// Builds and returns an `Err(UnexpectedXml)`.
@@ -135,14 +145,14 @@ impl<'a, R: Read> Parser<'a, R> {
         // <fault> / <params>
         match self.cur.clone() {
             XmlEvent::StartElement { ref name, .. } => {
-                if name == &OwnedName::local("fault") {
+                if name.local_name == "fault" {
                     self.next()?;
                     let value = self.parse_value()?;
                     let fault = Fault::from_value(&value).ok_or_else(|| {
                         io::Error::new(ErrorKind::Other, "malformed <fault>")
                     })?;
                     response = Err(fault);
-                } else if name == &OwnedName::local("params") {
+                } else if name.local_name == "params" {
                     self.next()?;
                     // <param>
                     self.expect_open("param")?;
@@ -199,8 +209,8 @@ impl<'a, R: Read> Parser<'a, R> {
 
                             // <name>NAME</name>
                             self.expect_open("name")?;
-                            let name = match self.cur.clone() {
-                                XmlEvent::Characters(string) => string,
+                            let name = match self.cur {
+                                XmlEvent::Characters(ref string) => string.clone(),
                                 _ => return self.expected("characters"),
                             };
                             self.next()?;
@@ -258,7 +268,14 @@ impl<'a, R: Read> Parser<'a, R> {
                             XmlEvent::Characters(ref string) => {
                                 self.next()?;
                                 self.expect_close("base64")?;
-                                base64::decode(string).map_err(|_| {
+
+                                let config = base64::Config::new(
+                                    base64::CharacterSet::Standard,
+                                    true,       // enable padding (default)
+                                    true,       // accept and remove whitespace/linebreaks
+                                    base64::LineWrap::NoWrap,   // ignored for `decode`
+                                );
+                                base64::decode_config(string, config).map_err(|_| {
                                     self.invalid_value("base64", string.to_string())
                                 })?
                             },
@@ -270,52 +287,43 @@ impl<'a, R: Read> Parser<'a, R> {
                         };
                         Value::Base64(data)
                     }
-                    _ => {
+                    "i4" | "int" => {
                         self.next()?;
-                        // All other types expect raw characters...
-                        let data = match self.cur.clone() {
-                            XmlEvent::Characters(string) => string,
-                            _ => return self.expected("characters"),
-                        };
-
-                        let value = match name {
-                            "i4" | "int" => {
-                                Value::Int(data.parse::<i32>().map_err(|_| {
-                                    self.invalid_value("integer", data)
-                                })?)
-                            }
-                            "i8" => {
-                                Value::Int64(data.parse::<i64>().map_err(|_| {
-                                    self.invalid_value("i8", data)
-                                })?)
-                            }
-                            "boolean" => {
-                                let val = match &*data {
-                                    "0" => false,
-                                    "1" => true,
-                                    _ => return Err(self.invalid_value("boolean", data)),
-                                };
-                                Value::Bool(val)
-                            }
-                            "double" => {
-                                Value::Double(data.parse::<f64>().map_err(|_| {
-                                    self.invalid_value("double", data)
-                                })?)
-                            }
-                            "dateTime.iso8601" => {
-                                Value::DateTime(datetime(&data).map_err(|_| {
-                                    self.invalid_value("dateTime.iso8601", data)
-                                })?)
-                            }
-                            _ => return self.expected("valid type tag or characters"),
-                        };
-
-                        self.next()?;
-                        // ...and a corresponding close tag
+                        let value = self.expect_value("integer", |data| data.parse::<i32>().map(Value::Int))?;
                         self.expect_close(name)?;
-
                         value
                     }
+                    "i8" => {
+                        self.next()?;
+                        let value = self.expect_value("i8", |data| data.parse::<i64>().map(Value::Int64))?;
+                        self.expect_close(name)?;
+                        value
+                    }
+                    "boolean" => {
+                        self.next()?;
+                        let value = self.expect_value("boolean", |data| {
+                            match data {
+                                "0" => Ok(Value::Bool(false)),
+                                "1" => Ok(Value::Bool(true)),
+                                _ => Err(()),
+                            }
+                        })?;
+                        self.expect_close(name)?;
+                        value
+                    }
+                    "double" => {
+                        self.next()?;
+                        let value = self.expect_value("double", |data| data.parse::<f64>().map(Value::Double))?;
+                        self.expect_close(name)?;
+                        value
+                    }
+                    "dateTime.iso8601" => {
+                        self.next()?;
+                        let value = self.expect_value("dateTime.iso8601", |data| datetime(data).map(Value::DateTime))?;
+                        self.expect_close(name)?;
+                        value
+                    }
+                    _ => return self.expected("valid type tag"),
                 }
             }
             XmlEvent::Characters(string) => {
@@ -340,7 +348,9 @@ mod tests {
 
     use Value;
     use error::Fault;
+
     use std::fmt::Debug;
+    use std::iter;
 
     fn read_response(xml: &str) -> ParseResult<Response> {
         parse_response(&mut xml.as_bytes())
@@ -524,6 +534,20 @@ mod tests {
     fn parses_base64() {
         assert_eq!(read_value("<value><base64>0J/QvtC10YXQsNC70Lgh</base64></value>"),
             Ok(Value::Base64("Поехали!".bytes().collect())));
+
+        assert_eq!(read_value("<value><base64> 0J/Qv tC10YXQ sNC70 Lgh  </base64></value>"),
+           Ok(Value::Base64("Поехали!".bytes().collect())));
+
+        assert_eq!(read_value("<value><base64>\n0J/QvtC10\nYXQsNC7\n0Lgh\n</base64></value>"),
+           Ok(Value::Base64("Поехали!".bytes().collect())));
+    }
+
+    #[test]
+    fn parses_empty_base64() {
+        assert_eq!(read_value("<value><base64></base64></value>"),
+                   Ok(Value::Base64(Vec::new())));
+        assert_eq!(read_value("<value><base64/></value>"),
+                   Ok(Value::Base64(Vec::new())));
     }
 
     #[test]
@@ -567,14 +591,6 @@ mod tests {
     fn parses_empty_value_as_string() {
         assert_eq!(read_value("<value></value>"),
                    Ok(Value::String(String::new())));
-    }
-
-    #[test]
-    fn parses_empty_base64() {
-        assert_eq!(read_value("<value><base64></base64></value>"),
-            Ok(Value::Base64(Vec::new())));
-        assert_eq!(read_value("<value><base64/></value>"),
-            Ok(Value::Base64(Vec::new())));
     }
 
     #[test]
@@ -644,10 +660,9 @@ mod tests {
             "unexpected XML at 1:1 (expected tag <value> without attributes, found end of data)"
         );
 
-        // FIXME: This one could use some improvement:
         assert_eq!(
             errstr(r#"<value><SURPRISE></SURPRISE></value>"#),
-            "unexpected XML at 1:18 (expected characters, found </SURPRISE>)"
+            "unexpected XML at 1:8 (expected valid type tag, found <SURPRISE>)"
         );
 
         assert_eq!(
@@ -685,5 +700,29 @@ mod tests {
     </params>
 </methodResponse>
 "##));
+    }
+
+    #[test]
+    fn duplicate_struct_member() {
+        // Duplicate struct members are overwritten with the last one
+        assert_eq!(read_value(r#"
+            <value>
+                <struct>
+                    <member>
+                        <name>A</name>
+                        <value>first</value>
+                    </member>
+                    <member>
+                        <name>A</name>
+                        <value>second</value>
+                    </member>
+                </struct>
+            </value>
+            "#), Ok(Value::Struct(
+                iter::once((
+                    "A".into(), "second".into()
+                )).collect()
+            ))
+        );
     }
 }
